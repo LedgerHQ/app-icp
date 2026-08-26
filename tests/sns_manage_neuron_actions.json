@@ -10,7 +10,7 @@
       "2 | Neuron Id [2/2] : 829f06e5 235a0d58 0e96d372 7729ea24",
       "3 | Disburse to [1/2] : 5upke-tazvi-6ufqc i3v6r-j4gpu-dpwti",
       "3 | Disburse to [2/2] : obhal-yb5xj-ue32x ktkql-rqe",
-      "4 | Amount (Tokens) : 50000000",
+      "4 | Amount (unknown) : 50000000",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "output_expert": [
@@ -20,7 +20,7 @@
       "2 | Neuron Id [2/2] : 829f06e5 235a0d58 0e96d372 7729ea24",
       "3 | Disburse to [1/2] : 5upke-tazvi-6ufqc i3v6r-j4gpu-dpwti",
       "3 | Disburse to [2/2] : obhal-yb5xj-ue32x ktkql-rqe",
-      "4 | Amount (Tokens) : 50000000",
+      "4 | Amount (unknown) : 50000000",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "valid": true,
@@ -78,7 +78,7 @@
       "2 | Neuron Id [2/2] : 829f06e5 235a0d58 0e96d372 7729ea24",
       "3 | Disburse to [1/2] : 5upke-tazvi-6ufqc i3v6r-j4gpu-dpwti",
       "3 | Disburse to [2/2] : obhal-yb5xj-ue32x ktkql-rqe",
-      "4 | Amount (Tokens) : All",
+      "4 | Amount (unknown) : All",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "output_expert": [
@@ -88,7 +88,7 @@
       "2 | Neuron Id [2/2] : 829f06e5 235a0d58 0e96d372 7729ea24",
       "3 | Disburse to [1/2] : 5upke-tazvi-6ufqc i3v6r-j4gpu-dpwti",
       "3 | Disburse to [2/2] : obhal-yb5xj-ue32x ktkql-rqe",
-      "4 | Amount (Tokens) : All",
+      "4 | Amount (unknown) : All",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "valid": true,
@@ -144,7 +144,7 @@
       "2 | Neuron Id [2/2] : 6cf40da7 6361aeaf ee5133e1 d9acea3d",
       "3 | Disburse to [1/2] : 5upke-tazvi-6ufqc i3v6r-j4gpu-dpwti",
       "3 | Disburse to [2/2] : obhal-yb5xj-ue32x ktkql-rqe",
-      "4 | Amount (Tokens) : 200000000",
+      "4 | Amount (unknown) : 200000000",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "output_expert": [
@@ -154,7 +154,7 @@
       "2 | Neuron Id [2/2] : 6cf40da7 6361aeaf ee5133e1 d9acea3d",
       "3 | Disburse to [1/2] : 5upke-tazvi-6ufqc i3v6r-j4gpu-dpwti",
       "3 | Disburse to [2/2] : obhal-yb5xj-ue32x ktkql-rqe",
-      "4 | Amount (Tokens) : 200000000",
+      "4 | Amount (unknown) : 200000000",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "valid": true,
@@ -215,7 +215,7 @@
         "3 | Disburse to [3/5] : .d7e8516 52cd032b a5ed76b1 7f626aa4",
         "3 | Disburse to [4/5] : 7829f06e 5235a0d5 80e96d37 27729ea2",
         "3 | Disburse to [5/5] : 4",
-        "4 | Amount (Tokens) : 200000000",
+        "4 | Amount (unknown) : 200000000",
         "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "output_expert": [
@@ -228,7 +228,7 @@
         "3 | Disburse to [3/5] : .d7e8516 52cd032b a5ed76b1 7f626aa4",
         "3 | Disburse to [4/5] : 7829f06e 5235a0d5 80e96d37 27729ea2",
         "3 | Disburse to [5/5] : 4",
-        "4 | Amount (Tokens) : 200000000",
+        "4 | Amount (unknown) : 200000000",
         "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "valid": true,
@@ -338,7 +338,7 @@
       "3 | Disburse to [3/5] : .a36e143 c86e7e47 1e7c7195 06487cf7",
       "3 | Disburse to [4/5] : a6cf40da 76361aea fee5133e 1d9acea3",
       "3 | Disburse to [5/5] : d",
-      "4 | Amount (Tokens) : 2870000000",
+      "4 | Amount (unknown) : 2870000000",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "output_expert": [
@@ -351,7 +351,7 @@
       "3 | Disburse to [3/5] : .a36e143 c86e7e47 1e7c7195 06487cf7",
       "3 | Disburse to [4/5] : a6cf40da 76361aea fee5133e 1d9acea3",
       "3 | Disburse to [5/5] : d",
-      "4 | Amount (Tokens) : 2870000000",
+      "4 | Amount (unknown) : 2870000000",
       "5 | Valid until : 2023-01-31 10:50:17 UTC"
     ],
     "valid": true,
