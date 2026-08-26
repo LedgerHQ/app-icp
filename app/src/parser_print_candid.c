@@ -27,6 +27,21 @@
 
 #define DEFAULT_MAXIMUM_FEES 10000
 
+// The SNS branch of manage_neuron accepts any canister, because SNS
+// governance canisters are created dynamically and there is no list the
+// device could check one against. NNS is pinned to a single id, so this is
+// the only manage_neuron path that reaches the user with an unchecked
+// canister; label it as such rather than presenting it the way a pinned one
+// is presented.
+__Z_INLINE parser_error_t print_sns_canister_id(char *outKey, uint16_t outKeyLen, char *outVal, uint16_t outValLen,
+                                                uint8_t pageIdx, uint8_t *pageCount) {
+    const uint8_t *canisterId = parser_tx_obj.tx_fields.call.canister_id.data;
+    const uint8_t canisterIdSize = (uint8_t)parser_tx_obj.tx_fields.call.canister_id.len;
+
+    snprintf(outKey, outKeyLen, "Unverified SNS");
+    return print_principal(canisterId, canisterIdSize, outVal, outValLen, pageIdx, pageCount);
+}
+
 __Z_INLINE parser_error_t print_permission(int32_t permission, char *outVal, uint16_t outValLen, uint8_t pageIdx,
                                            uint8_t *pageCount) {
     switch (permission) {
@@ -862,11 +877,7 @@ static parser_error_t parser_getItemConfigureDissolvingSNS(uint8_t displayIdx, c
     }
 
     if (displayIdx == 1) {
-        const uint8_t *canisterId = (const uint8_t *)parser_tx_obj.tx_fields.call.canister_id.data;
-        const uint8_t canisterIdSize = (uint8_t)parser_tx_obj.tx_fields.call.canister_id.len;
-
-        snprintf(outKey, outKeyLen, "Canister Id");
-        return print_principal(canisterId, canisterIdSize, outVal, outValLen, pageIdx, pageCount);
+        return print_sns_canister_id(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
     }
 
     if (displayIdx == 2) {
@@ -899,11 +910,7 @@ static parser_error_t parser_getItemNeuronPermissions(uint8_t displayIdx, char *
     }
 
     if (displayIdx == 1) {
-        const uint8_t *canisterId = (const uint8_t *)parser_tx_obj.tx_fields.call.canister_id.data;
-        const uint8_t canisterIdSize = (uint8_t)parser_tx_obj.tx_fields.call.canister_id.len;
-
-        snprintf(outKey, outKeyLen, "Canister Id");
-        return print_principal(canisterId, canisterIdSize, outVal, outValLen, pageIdx, pageCount);
+        return print_sns_canister_id(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
     }
 
     if (displayIdx == 2) {
@@ -1340,11 +1347,7 @@ static parser_error_t parser_getItemDisburseSNS(uint8_t displayIdx, char *outKey
     }
 
     if (displayIdx == 1) {
-        const uint8_t *canisterId = (uint8_t *)&parser_tx_obj.tx_fields.call.canister_id.data;
-        const uint8_t canisterIdSize = (uint8_t)parser_tx_obj.tx_fields.call.canister_id.len;
-
-        snprintf(outKey, outKeyLen, "Canister Id");
-        return print_principal(canisterId, canisterIdSize, outVal, outValLen, pageIdx, pageCount);
+        return print_sns_canister_id(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
     }
 
     if (displayIdx == 2) {
@@ -1403,11 +1406,7 @@ static parser_error_t parser_getItemSNSStakeMaturity(uint8_t displayIdx, char *o
     }
 
     if (displayIdx == 1) {
-        const uint8_t *canisterId = (uint8_t *)&parser_tx_obj.tx_fields.call.canister_id.data;
-        const uint8_t canisterIdSize = (uint8_t)parser_tx_obj.tx_fields.call.canister_id.len;
-
-        snprintf(outKey, outKeyLen, "Canister Id");
-        return print_principal(canisterId, canisterIdSize, outVal, outValLen, pageIdx, pageCount);
+        return print_sns_canister_id(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
     }
 
     if (displayIdx == 2) {
@@ -1436,11 +1435,7 @@ static parser_error_t parser_getItemSNSSetDissolveDelay(uint8_t displayIdx, char
     }
 
     if (displayIdx == 1) {
-        const uint8_t *canisterId = (uint8_t *)&parser_tx_obj.tx_fields.call.canister_id.data;
-        const uint8_t canisterIdSize = (uint8_t)parser_tx_obj.tx_fields.call.canister_id.len;
-
-        snprintf(outKey, outKeyLen, "Canister Id");
-        return print_principal(canisterId, canisterIdSize, outVal, outValLen, pageIdx, pageCount);
+        return print_sns_canister_id(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
     }
 
     if (displayIdx == 2) {
