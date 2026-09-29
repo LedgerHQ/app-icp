@@ -185,7 +185,11 @@ static parser_error_t print_utc_time(uint64_t time_ns, char *outVal, uint16_t ou
         return parser_unexpected_value;
     }
 
-    char buffer[PRINT_NUMBER_BUFFER_LEN] = {0};
+    // decodeTime bounds every field, so the result is always 23 characters,
+    // but the compiler only knows the fields are ints and sizes the worst case
+    // at 30. Give it the room it thinks it needs rather than carrying a
+    // truncation warning on every build.
+    char buffer[36] = {0};
     snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d UTC", td.tm_year, td.tm_mon, td.tm_day, td.tm_hour,
              td.tm_min, td.tm_sec);
 
@@ -237,10 +241,6 @@ static bool tx_has_created_at(void) {
     return tx_created_at(&isSet, &value_ns);
 }
 
-// Rows appended after whatever the method-specific renderer produces, in this
-// order: created-at, then the ingress expiry.
-static uint8_t tx_tail_items(void) { return (uint8_t)((tx_has_created_at() ? 1 : 0) + (tx_has_ingress_expiry() ? 1 : 0)); }
-
 static parser_error_t parser_getItemCreatedAt(char *outKey, uint16_t outKeyLen, char *outVal, uint16_t outValLen,
                                               uint8_t pageIdx, uint8_t *pageCount) {
     bool isSet = false;
@@ -279,6 +279,85 @@ static parser_error_t parser_getItemIngressExpiry(char *outKey, uint16_t outKeyL
 
     snprintf(outKey, outKeyLen, "Valid until");
     return print_utc_time(expiry_ns, outVal, outValLen, pageIdx, pageCount);
+}
+
+// Any path other than 0'/0/0 is named on screen, in both modes - accounts
+// 1'-255' and indices 1-255 are reachable without expert mode, and expert mode
+// lifts the range cap on top of that. Nothing used to say which account was
+// signing. Only the device knows the requested path; off-device builds have no
+// derivation to report.
+static bool tx_has_custom_path(void) {
+#if defined(LEDGER_SPECIFIC)
+    return hdPath[2] != HDPATH_2_DEFAULT || hdPath[3] != HDPATH_3_DEFAULT || hdPath[4] != HDPATH_4_DEFAULT;
+#else
+    return false;
+#endif
+}
+
+static parser_error_t parser_getItemSigningPath(char *outKey, uint16_t outKeyLen, char *outVal, uint16_t outValLen,
+                                                uint8_t pageIdx, uint8_t *pageCount) {
+    char buffer[PRINT_BUFFER_SMALL_LEN] = {0};
+    bip32_to_str(buffer, sizeof(buffer), hdPath, HDPATH_LEN_DEFAULT);
+
+    snprintf(outKey, outKeyLen, "Signing account");
+    pageString(outVal, outValLen, buffer, pageIdx, pageCount);
+    return parser_ok;
+}
+
+// Rows appended after whatever the method-specific renderer produces, in the
+// order listed here; each is present only when it applies.
+typedef enum {
+    tail_created_at = 0,
+    tail_signing_path,
+    tail_ingress_expiry,
+    tail_item_count,
+} tail_item_e;
+
+static bool tx_has_tail_item(tail_item_e item) {
+    switch (item) {
+        case tail_created_at:
+            return tx_has_created_at();
+        case tail_signing_path:
+            return tx_has_custom_path();
+        case tail_ingress_expiry:
+            return tx_has_ingress_expiry();
+        default:
+            return false;
+    }
+}
+
+static uint8_t tx_tail_items(void) {
+    uint8_t count = 0;
+    for (tail_item_e item = 0; item < tail_item_count; item++) {
+        if (tx_has_tail_item(item)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static parser_error_t parser_getItemTail(uint8_t tailIdx, char *outKey, uint16_t outKeyLen, char *outVal, uint16_t outValLen,
+                                         uint8_t pageIdx, uint8_t *pageCount) {
+    uint8_t seen = 0;
+    for (tail_item_e item = 0; item < tail_item_count; item++) {
+        if (!tx_has_tail_item(item)) {
+            continue;
+        }
+        if (seen == tailIdx) {
+            switch (item) {
+                case tail_created_at:
+                    return parser_getItemCreatedAt(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
+                case tail_signing_path:
+                    return parser_getItemSigningPath(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
+                case tail_ingress_expiry:
+                    return parser_getItemIngressExpiry(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
+                default:
+                    return parser_no_data;
+            }
+        }
+        seen++;
+    }
+    return parser_no_data;
 }
 
 parser_error_t parser_getNumItems(const parser_context_t *ctx, uint8_t *num_items) {
@@ -351,10 +430,7 @@ parser_error_t parser_getItem(const parser_context_t *ctx, uint8_t displayIdx, c
             const uint8_t tailIdx = (uint8_t)(displayIdx - (numItems - tail));
             MEMZERO(outKey, outKeyLen);
             MEMZERO(outVal, outValLen);
-            if (tx_has_created_at() && tailIdx == 0) {
-                return parser_getItemCreatedAt(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
-            }
-            return parser_getItemIngressExpiry(outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
+            return parser_getItemTail(tailIdx, outKey, outKeyLen, outVal, outValLen, pageIdx, pageCount);
         }
     }
 
