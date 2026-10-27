@@ -40,7 +40,7 @@ zxerr_t addr_getItem(int8_t displayIdx, char *outKey, uint16_t outKeyLen, char *
     char buffer[PRINT_BUFFER_SMALL_LEN] = {0};
     snprintf(buffer, sizeof(buffer), "addr_getItem %d/%d", displayIdx, pageIdx);
     zemu_log_stack(buffer);
-    if (action_addrResponseLen < VIEW_PRINCIPAL_OFFSET_TEXT || IO_APDU_BUFFER_SIZE < action_addrResponseLen) {
+    if (action_addrResponseLen < VIEW_PRINCIPAL_OFFSET_TEXT || sizeof(action_addrResponse) < action_addrResponseLen) {
         return zxerr_buffer_too_small;
     }
 
@@ -48,8 +48,8 @@ zxerr_t addr_getItem(int8_t displayIdx, char *outKey, uint16_t outKeyLen, char *
     switch (displayIdx) {
         case 0:
             snprintf(outKey, outKeyLen, "Address ");
-            err = page_hexstring_with_delimiters(G_io_apdu_buffer + VIEW_ADDRESS_OFFSET_TEXT, DFINITY_SUBACCOUNT_LEN, outVal,
-                                                 outValLen, pageIdx, pageCount);
+            err = page_hexstring_with_delimiters(action_addrResponse + VIEW_ADDRESS_OFFSET_TEXT, DFINITY_SUBACCOUNT_LEN,
+                                                 outVal, outValLen, pageIdx, pageCount);
             if (err != parser_ok) {
                 return zxerr_unknown;
             }
@@ -57,7 +57,7 @@ zxerr_t addr_getItem(int8_t displayIdx, char *outKey, uint16_t outKeyLen, char *
 
         case 1:
             snprintf(outKey, outKeyLen, "Principal ");
-            err = page_textual_with_delimiters((const char *)G_io_apdu_buffer + VIEW_PRINCIPAL_OFFSET_TEXT,
+            err = page_textual_with_delimiters((const char *)action_addrResponse + VIEW_PRINCIPAL_OFFSET_TEXT,
                                                action_addrResponseLen - VIEW_PRINCIPAL_OFFSET_TEXT, outVal, outValLen,
                                                pageIdx, pageCount);
             if (err != parser_ok) {
