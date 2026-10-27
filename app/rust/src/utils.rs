@@ -692,6 +692,41 @@ pub fn handle_ui_message(item: &[u8], out: &mut [u8], page: u8) -> Result<u8, Vi
     Ok(n_pages as u8)
 }
 
+/// True when the text holds a byte the review cannot show as itself: the view
+/// stops at a NUL, and other control characters are not drawn.
+pub fn has_control_chars(item: &[u8]) -> bool {
+    item.iter().any(|&b| b < 0x20 || b == 0x7f)
+}
+
+/// Pages `item` as lowercase hex, two characters per byte, never splitting a byte.
+pub fn handle_ui_message_hex(item: &[u8], out: &mut [u8], page: u8) -> Result<u8, ViewError> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    // one byte is kept for the null terminator
+    let m_len = out.len().checked_sub(1).ok_or(ViewError::Unknown)?;
+    let per_page = m_len / 2;
+    if per_page == 0 {
+        return Err(ViewError::Unknown);
+    }
+
+    let n_pages = item.len().div_ceil(per_page).max(1);
+    if n_pages > MAX_UI_PAGES {
+        return Err(ViewError::Unknown);
+    }
+    if page as usize >= n_pages {
+        return Err(ViewError::NoData);
+    }
+
+    let start = page as usize * per_page;
+    let end = (start + per_page).min(item.len());
+    for (i, b) in item[start..end].iter().enumerate() {
+        out[2 * i] = HEX[(b >> 4) as usize];
+        out[2 * i + 1] = HEX[(b & 0x0f) as usize];
+    }
+    out[2 * (end - start)] = 0;
+
+    Ok(n_pages as u8)
+}
+
 #[cfg(test)]
 mod test_utils {
     use std::vec;
