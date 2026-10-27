@@ -817,7 +817,10 @@ parser_error_t _validateTx(__Z_UNUSED const parser_context_t *c, const parser_tx
         if (v->tx_fields.call.method_type == candid_icrc_transfer) {
             const icrc_transfer_t *fields = &v->tx_fields.call.data.icrcTransfer;
             if (fields->icp_canister == 0 || fields->account.has_owner == 0 || fields->account.has_subaccount == 0 ||
-                fields->account.subaccount.len != DFINITY_SUBACCOUNT_LEN || fields->has_memo == 0 || fields->memo.len == 0) {
+                fields->account.subaccount.len != DFINITY_SUBACCOUNT_LEN || fields->has_memo == 0 ||
+                // Governance claims the stake at sha256(... || u64_be(memo)): any other memo length sends
+                // the ICP to a subaccount no neuron can be created for.
+                fields->memo.len != sizeof(uint64_t)) {
                 return parser_invalid_address;
             }
             // stands for rrkah-fqaaa-aaaaa-aaaaq-cai principal
