@@ -95,13 +95,13 @@ zxerr_t tx_getNumItems(uint8_t *num_items) {
     return zxerr_ok;
 }
 
-zxerr_t tx_getItem(int8_t displayIdx, char *outKey, uint16_t outKeyLen, char *outVal, uint16_t outValLen, uint8_t pageIdx,
+zxerr_t tx_getItem(uint8_t displayIdx, char *outKey, uint16_t outKeyLen, char *outVal, uint16_t outValLen, uint8_t pageIdx,
                    uint8_t *pageCount) {
     uint8_t numItems = 0;
 
     CHECK_ZXERR(tx_getNumItems(&numItems))
 
-    if (displayIdx < 0 || displayIdx >= numItems) {
+    if (displayIdx >= numItems) {
         return zxerr_no_data;
     }
 
@@ -137,13 +137,13 @@ zxerr_t tx_certNumItems(uint8_t *num_items) {
 }
 
 /// Gets an specific item from the transaction (including paging)
-zxerr_t tx_certGetItem(int8_t displayIdx, char *outKey, uint16_t outKeyLen, char *outValue, uint16_t outValueLen,
+zxerr_t tx_certGetItem(uint8_t displayIdx, char *outKey, uint16_t outKeyLen, char *outValue, uint16_t outValueLen,
                        uint8_t pageIdx, uint8_t *pageCount) {
     uint8_t numItems = 0;
 
     CHECK_ZXERR(tx_certNumItems(&numItems))
 
-    if (displayIdx < 0 || displayIdx >= numItems) {
+    if (displayIdx >= numItems) {
         return zxerr_no_data;
     }
 

@@ -21,7 +21,7 @@ parser_error_t rs_verify_certificate(const uint8_t *certificate, uint16_t certif
 
 parser_error_t rs_getNumItems(uint8_t *num_items);
 
-parser_error_t rs_getItem(int8_t displayIdx, char *outKey, uint16_t outKeyLen, char *outValue, uint16_t outValueLen,
+parser_error_t rs_getItem(uint8_t displayIdx, char *outKey, uint16_t outKeyLen, char *outValue, uint16_t outValueLen,
                           uint8_t pageIdx, uint8_t *pageCount);
 
 // use to clear resources after certificate verification and signing
