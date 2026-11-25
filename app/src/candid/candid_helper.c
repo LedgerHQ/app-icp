@@ -322,6 +322,10 @@ static parser_error_t readCandidTypeTable_Variant(parser_context_t *ctx) {
     for (uint64_t i = 0; i < objectLength; i++) {
         uint64_t hash;
         CHECK_PARSER_ERR(readCandidLEB128(ctx, &hash))
+        // Field ids are u32: a canister refuses the whole message otherwise
+        if (hash > UINT32_MAX) {
+            return parser_value_out_of_range;
+        }
 
         if (prevHashInitialized && hash <= prevHash) {
             return parser_value_out_of_range;
@@ -393,18 +397,6 @@ parser_error_t readCandidTypeTable_Item(parser_context_t *ctx, const int64_t *ty
     return parser_ok;
 }
 
-parser_error_t readCandidOptional(candid_transaction_t *txn) {
-    if (txn == NULL) {
-        return parser_unexpected_error;
-    }
-    if (txn->txn_type != Opt) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(readCandidType(&txn->ctx, &txn->element.implementation))
-    return parser_ok;
-}
-
 parser_error_t getCandidTypeFromTable(candid_transaction_t *txn, uint64_t table_index) {
     if (txn == NULL) {
         return parser_unexpected_error;
@@ -470,33 +462,155 @@ parser_error_t readCandidHeader(parser_context_t *ctx, candid_transaction_t *txn
     return parser_ok;
 }
 
-parser_error_t getHash(candid_transaction_t *txn, const uint8_t variant, uint64_t *hash) {
-    if (txn == NULL || hash == NULL) {
+// Moves txn to the table entry `type` refers to and checks its constructor.
+// Primitive opcodes never name a table entry.
+static parser_error_t candidTableEntry(candid_transaction_t *txn, int64_t type, IDLTypes_e constructor) {
+    if (txn == NULL) {
         return parser_unexpected_error;
     }
-    *hash = 0;
-    // Get option type implementation
-    CHECK_PARSER_ERR(getCandidTypeFromTable(txn, txn->element.implementation))
+    if (type < 0) {
+        return parser_unexpected_type;
+    }
+    CHECK_PARSER_ERR(getCandidTypeFromTable(txn, (uint64_t)type))
+    if (txn->txn_type != constructor) {
+        return parser_unexpected_type;
+    }
+    return parser_ok;
+}
 
-    int64_t type = 0;
-    CHECK_PARSER_ERR(readCandidType(&txn->ctx, &type))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(txn, type))
+parser_error_t candidExpectPrimitive(int64_t type, IDLTypes_e primitive) {
+    return type == (int64_t)primitive ? parser_ok : parser_unexpected_type;
+}
 
-    uint64_t variantLength = 0;
-    CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, &variantLength))
-    if (variant >= variantLength) {
+parser_error_t candidExpectOpt(candid_transaction_t *txn, int64_t type, int64_t *inner) {
+    if (inner == NULL) {
+        return parser_unexpected_error;
+    }
+    CHECK_PARSER_ERR(candidTableEntry(txn, type, Opt))
+    CHECK_PARSER_ERR(readCandidType(&txn->ctx, inner))
+    return parser_ok;
+}
+
+parser_error_t candidExpectOptOf(candid_transaction_t *txn, int64_t type, IDLTypes_e primitive) {
+    int64_t inner = 0;
+    CHECK_PARSER_ERR(candidExpectOpt(txn, type, &inner))
+    return candidExpectPrimitive(inner, primitive);
+}
+
+parser_error_t candidExpectVec(candid_transaction_t *txn, int64_t type, int64_t *element) {
+    if (element == NULL) {
+        return parser_unexpected_error;
+    }
+    CHECK_PARSER_ERR(candidTableEntry(txn, type, Vector))
+    CHECK_PARSER_ERR(readCandidType(&txn->ctx, element))
+    return parser_ok;
+}
+
+parser_error_t candidExpectVecOf(candid_transaction_t *txn, int64_t type, IDLTypes_e primitive) {
+    int64_t element = 0;
+    CHECK_PARSER_ERR(candidExpectVec(txn, type, &element))
+    return candidExpectPrimitive(element, primitive);
+}
+
+parser_error_t candidExpectBlob(candid_transaction_t *txn, int64_t type) { return candidExpectVecOf(txn, type, Nat8); }
+
+parser_error_t candidExpectOptBlob(candid_transaction_t *txn, int64_t type) {
+    int64_t inner = 0;
+    CHECK_PARSER_ERR(candidExpectOpt(txn, type, &inner))
+    return candidExpectBlob(txn, inner);
+}
+
+parser_error_t candidExpectRecord(candid_transaction_t *txn, int64_t type, const uint64_t *hashes, uint8_t count,
+                                  int64_t *fields) {
+    if (count > 0 && (hashes == NULL || fields == NULL)) {
+        return parser_unexpected_error;
+    }
+    CHECK_PARSER_ERR(candidTableEntry(txn, type, Record))
+
+    uint64_t length = 0;
+    CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, &length))
+    if (length != count) {
+        return parser_unexpected_type;
+    }
+
+    const uint64_t *expected = (const uint64_t *)PIC(hashes);
+    for (uint8_t i = 0; i < count; i++) {
+        uint64_t hash = 0;
+        CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, &hash))
+        if (hash != expected[i]) {
+            return parser_unexpected_type;
+        }
+        CHECK_PARSER_ERR(readCandidType(&txn->ctx, &fields[i]))
+    }
+    return parser_ok;
+}
+
+parser_error_t candidExpectSingleFieldRecord(candid_transaction_t *txn, int64_t type, uint64_t hash, int64_t *field) {
+    return candidExpectRecord(txn, type, &hash, 1, field);
+}
+
+parser_error_t candidExpectRecordOf(candid_transaction_t *txn, int64_t type, uint64_t hash, IDLTypes_e primitive) {
+    int64_t field = 0;
+    CHECK_PARSER_ERR(candidExpectSingleFieldRecord(txn, type, hash, &field))
+    return candidExpectPrimitive(field, primitive);
+}
+
+parser_error_t candidExpectRecordOfBlob(candid_transaction_t *txn, int64_t type, uint64_t hash) {
+    int64_t field = 0;
+    CHECK_PARSER_ERR(candidExpectSingleFieldRecord(txn, type, hash, &field))
+    return candidExpectBlob(txn, field);
+}
+
+parser_error_t candidExpectEmptyRecord(candid_transaction_t *txn, int64_t type) {
+    return candidExpectRecord(txn, type, NULL, 0, NULL);
+}
+
+parser_error_t candidVariantCase(candid_transaction_t *txn, int64_t type, uint64_t index, uint64_t *hash,
+                                 int64_t *caseType) {
+    if (hash == NULL || caseType == NULL) {
+        return parser_unexpected_error;
+    }
+    CHECK_PARSER_ERR(candidTableEntry(txn, type, Variant))
+
+    uint64_t length = 0;
+    CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, &length))
+    if (index >= length) {
         return parser_value_out_of_range;
     }
 
-    // Move until requested variant
-    for (uint64_t i = 0; i < variant; i++) {
-        int64_t dummyType;
-        uint64_t tmpHash = 0;
-        CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, &tmpHash))
-        CHECK_PARSER_ERR(readCandidType(&txn->ctx, &dummyType))
+    for (uint64_t i = 0; i <= index; i++) {
+        CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, hash))
+        CHECK_PARSER_ERR(readCandidType(&txn->ctx, caseType))
     }
+    return parser_ok;
+}
 
-    CHECK_PARSER_ERR(readCandidLEB128(&txn->ctx, hash))
-    CHECK_PARSER_ERR(readCandidType(&txn->ctx, &txn->element.implementation))
+parser_error_t readCandidOptFlag(parser_context_t *ctx, uint8_t *present) {
+    CHECK_PARSER_ERR(readCandidByte(ctx, present))
+    if (*present > 1) {
+        return parser_unexpected_value;
+    }
+    return parser_ok;
+}
+
+parser_error_t readCandidBool(parser_context_t *ctx, uint8_t *v) { return readCandidOptFlag(ctx, v); }
+
+parser_error_t readCandidPrincipal(parser_context_t *ctx, candid_Principal_t *principal) {
+    if (principal == NULL) {
+        return parser_unexpected_error;
+    }
+    uint8_t tag = 0;
+    CHECK_PARSER_ERR(readCandidByte(ctx, &tag))
+    // 0 would be an opaque reference, which no canister accepts as a principal
+    if (tag != 1) {
+        return parser_unexpected_value;
+    }
+    uint64_t len = 0;
+    CHECK_PARSER_ERR(readCandidLEB128(ctx, &len))
+    if (len > DFINITY_PRINCIPAL_LEN) {
+        return parser_unexpected_value;
+    }
+    principal->len = (uint8_t)len;
+    CHECK_PARSER_ERR(readCandidBytes(ctx, principal->ptr, principal->len))
     return parser_ok;
 }

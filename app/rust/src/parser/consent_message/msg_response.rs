@@ -235,3 +235,116 @@ mod msg_response_test {
         });
     }
 }
+
+#[cfg(test)]
+mod text_value_test {
+    use std::{string::String, vec::Vec};
+
+    use super::*;
+
+    fn leb(mut v: u64, out: &mut Vec<u8>) {
+        loop {
+            let mut b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v != 0 {
+                b |= 0x80;
+            }
+            out.push(b);
+            if v == 0 {
+                break;
+            }
+        }
+    }
+
+    fn text(s: &[u8], out: &mut Vec<u8>) {
+        leb(s.len() as u64, out);
+        out.extend_from_slice(s);
+    }
+
+    // Ok(ConsentInfo) with a FieldsDisplayMessage of Text fields, encoded with the
+    // type table of the reference ICRC-21 implementation (same as MSG_DATA above).
+    fn reply(intent: &str, fields: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut out = hex::decode(
+            "4449444c0f6b02bc8a0101c5fed2010c6c02efcee7800402e29fdcc806046c02aeaeb1cc0503d880c6d007716e766b029ee0b53b05fcdfd79a0f716c02f99cba840806dcec99f409716d076c02007101086b04cdf1cbbe030991c38ee7040ae998e3c30a0bebd2e8d60f0b6c01b99adecb01716c03c295a993017bd8a38ca80d78d8def6f60e716c01d8a38ca80d786b04d1c4987c0da3f2efe6020e9a8597e6030ee3c581900f0e6c02fc91f4f80571c498b1b50d7d6c01fc91f4f80571010000",
+        )
+        .unwrap();
+        out.push(0);
+        text(b"en", &mut out);
+        out.push(0);
+        leb(fields.len() as u64, &mut out);
+        for (k, v) in fields {
+            text(k.as_bytes(), &mut out);
+            out.push(0);
+            text(v, &mut out);
+        }
+        text(intent.as_bytes(), &mut out);
+        out
+    }
+
+    // The view draws title and value as C strings.
+    fn c_str(buf: &[u8]) -> String {
+        let n = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    }
+
+    // Every page of every item, rendered into a value buffer of `value_len` bytes.
+    fn screens(data: &[u8], value_len: usize) -> Vec<(String, String)> {
+        let resp = ConsentMessageResponse::from_bytes(data).unwrap();
+        let mut out = Vec::new();
+        for i in 0..resp.num_items().unwrap() {
+            let mut title = [0u8; 64];
+            let mut value = std::vec![0u8; value_len];
+            let pages = resp.render_item(i, &mut title, &mut value, 0).unwrap();
+            out.push((c_str(&title), c_str(&value)));
+            for p in 1..pages {
+                resp.render_item(i, &mut title, &mut value, p).unwrap();
+                out.push((c_str(&title), c_str(&value)));
+            }
+        }
+        out
+    }
+
+    // Stax / Flex / Apex P value buffers, and the Nano S+ one.
+    const VALUE_LENS: [usize; 4] = [144, 160, 162, 4096];
+
+    #[test]
+    fn text_with_a_nul_is_shown_whole_as_hex() {
+        let data = reply("Send ICP", &[("Memo", b"104467\x00999999")]);
+        for value_len in VALUE_LENS {
+            let shown = screens(&data, value_len);
+            assert_eq!(
+                shown,
+                std::vec![(
+                    String::from("Memo (hex)"),
+                    String::from("31303434363700393939393939")
+                )],
+                "value_len {}",
+                value_len
+            );
+        }
+    }
+
+    #[test]
+    fn printable_text_is_shown_as_text() {
+        let data = reply("Send ICP", &[("Memo", "Paiement n°42".as_bytes())]);
+        for value_len in VALUE_LENS {
+            let shown = screens(&data, value_len);
+            assert_eq!(
+                shown,
+                std::vec![(String::from("Memo"), String::from("Paiement n°42"))],
+                "value_len {}",
+                value_len
+            );
+        }
+    }
+
+    #[test]
+    fn long_hex_text_pages_without_losing_bytes() {
+        let memo: Vec<u8> = (0u8..100).collect();
+        let data = reply("Send ICP", &[("Memo", &memo)]);
+        let shown = screens(&data, 32);
+        let joined: String = shown.iter().map(|(_, v)| v.as_str()).collect();
+        assert_eq!(joined, hex::encode(&memo));
+        assert!(shown.iter().all(|(k, _)| k == "Memo (hex)"));
+    }
+}

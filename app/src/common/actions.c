@@ -18,3 +18,4 @@
 #include "actions.h"
 
 uint16_t action_addrResponseLen;
+uint8_t action_addrResponse[sizeof(answer_t)];

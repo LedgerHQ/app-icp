@@ -45,7 +45,7 @@ parser_error_t getCandidNat64FromVec(const uint8_t *buf, uint64_t *v, uint8_t si
     buf = buf + 8 * idx;
 
     for (uint8_t i = 0; i < 8; i++) {
-        *v += (uint64_t) * (buf + i) << 8 * i;
+        *v += (uint64_t)*(buf + i) << 8 * i;
     }
     return parser_ok;
 }
@@ -58,7 +58,7 @@ parser_error_t getCandidInt32FromVec(const uint8_t *buf, int32_t *v, uint8_t siz
     buf = buf + 4 * idx;
 
     for (uint8_t i = 0; i < 4; i++) {
-        *v += (int32_t) * (buf + i) << 8 * i;
+        *v += (int32_t)*(buf + i) << 8 * i;
     }
     return parser_ok;
 }
@@ -101,14 +101,17 @@ parser_error_t readCandidListNeurons(parser_tx_t *tx, const uint8_t *input, uint
         // element is not any of the non opt expected fields than its probably an
         // optional
         if (txn.element.field_hash == hash_neuron_ids) {
+            // neuron_ids : vec nat64
+            CHECK_PARSER_ERR(candidExpectVecOf(&txn, txn.element.implementation, Nat64))
             opt_fields_pos[i] = TYPE_NEURONS_IDS;
         } else if (txn.element.field_hash == hash_include_neurons_readable_by_caller && txn.element.implementation == Bool) {
             opt_fields_pos[i] = TYPE_CALLER;
         } else {
-            CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-            // Check that is an opt(inside the function) if not return error, not an
-            // expected type
-            CHECK_PARSER_ERR(readCandidOptional(&txn))
+            // Any other field must be an opt, and its value null (checked below).
+            // A null opt is the single byte 0 whatever its inner type, for the
+            // canister as for this parser, so the inner type is not checked.
+            int64_t inner = 0;
+            CHECK_PARSER_ERR(candidExpectOpt(&txn, txn.element.implementation, &inner))
             opt_fields_pos[i] = TYPE_OPT;
         }
     }
@@ -122,7 +125,7 @@ parser_error_t readCandidListNeurons(parser_tx_t *tx, const uint8_t *input, uint
         switch (opt_fields_pos[i]) {
             case TYPE_OPT:  // read the optional, expect its null or empty if not return
                             // error
-                CHECK_PARSER_ERR(readCandidByte(&ctx, &tmp_presence))
+                CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &tmp_presence))
                 if (tmp_presence) {  // expect empty optionals
                     return parser_unexpected_value;
                 }
@@ -136,7 +139,7 @@ parser_error_t readCandidListNeurons(parser_tx_t *tx, const uint8_t *input, uint
                 }
                 break;
             case TYPE_CALLER:  // read bool
-                CHECK_PARSER_ERR(readCandidByte(&ctx, &val->include_neurons_readable_by_caller))
+                CHECK_PARSER_ERR(readCandidBool(&ctx, &val->include_neurons_readable_by_caller))
                 break;
             default:
                 return parser_unexpected_value;
@@ -192,46 +195,20 @@ parser_error_t readCandidUpdateNodeProvider(parser_tx_t *tx, const uint8_t *inpu
     CHECK_PARSER_ERR(readAndCheckRootType(&ctx))
     candid_UpdateNodeProvider_t *val = &tx->tx_fields.call.data.candid_updateNodeProvider;
 
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-
-    // Check sanity
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 1) {
-        return parser_unexpected_value;
-    }
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != hash_reward_account) {
-        return parser_unexpected_type;
-    }
+    // UpdateNodeProvider = record { reward_account : opt AccountIdentifier }
+    const uint64_t fields[] = {hash_reward_account};
+    int64_t types[1] = {0};
+    CHECK_PARSER_ERR(candidExpectRecord(&txn, (int64_t)tx->candid_rootType, fields, 1, types))
+    int64_t accountIdentifier = 0;
+    CHECK_PARSER_ERR(candidExpectOpt(&txn, types[0], &accountIdentifier))
+    // AccountIdentifier = record { hash : blob }
+    CHECK_PARSER_ERR(candidExpectRecordOfBlob(&txn, accountIdentifier, hash_hash))
 
     // Now read
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &val->has_reward_account))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &val->has_reward_account))
     if (!val->has_reward_account) {
         return parser_unexpected_value;
     }
-
-    // Check sanity
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 1) {
-        return parser_unexpected_value;
-    }
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != hash_hash) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-
-    // Now read
     CHECK_PARSER_ERR(readCandidText(&ctx, &val->account_identifier))
     if (val->account_identifier.len != 32) {
         return parser_unexpected_number_items;
@@ -241,6 +218,56 @@ parser_error_t readCandidUpdateNodeProvider(parser_tx_t *tx, const uint8_t *inpu
         return parser_unexpected_characters;
     }
 
+    return parser_ok;
+}
+
+// icrc1 Account = record { owner : principal; subaccount : opt Subaccount }, Subaccount = blob
+static parser_error_t candidExpectIcrcAccount(candid_transaction_t *txn, int64_t type) {
+    const uint64_t fields[] = {icrc_hash_owner, icrc_hash_subaccount};
+    int64_t types[2] = {0};
+    CHECK_PARSER_ERR(candidExpectRecord(txn, type, fields, 2, types))
+    CHECK_PARSER_ERR(candidExpectPrimitive(types[0], Principal))
+    CHECK_PARSER_ERR(candidExpectOptBlob(txn, types[1]))
+    return parser_ok;
+}
+
+static parser_error_t readCandidIcrcAccount(parser_context_t *ctx, Account_t *account) {
+    CHECK_PARSER_ERR(readCandidPrincipal(ctx, &account->owner))
+    account->has_owner = 1;
+
+    CHECK_PARSER_ERR(readCandidOptFlag(ctx, &account->has_subaccount))
+    if (account->has_subaccount) {
+        CHECK_PARSER_ERR(readCandidText(ctx, &account->subaccount))
+    }
+    return parser_ok;
+}
+
+// opt blob holding an ICRC memo, which this app shows as a u64
+static parser_error_t readCandidIcrcMemo(parser_context_t *ctx, uint8_t *has_memo, sizedBuffer_t *memo) {
+    CHECK_PARSER_ERR(readCandidOptFlag(ctx, has_memo))
+    if (*has_memo) {
+        CHECK_PARSER_ERR(readCandidText(ctx, memo))
+        // should not be bigger than uint64
+        if (memo->len > 8) {
+            return parser_unexpected_value;
+        }
+    }
+    return parser_ok;
+}
+
+static parser_error_t setIcpCanister(const parser_context_t *ctx, uint8_t *icp_canister) {
+    // Check if the transaction has ICP canister
+    const uint8_t *canisterId = ctx->tx_obj->tx_fields.call.canister_id.data;
+    const size_t canisterIdSize = ctx->tx_obj->tx_fields.call.canister_id.len;
+    char canister_textual[64] = {0};
+    uint16_t outLen = sizeof(canister_textual);
+    if (canisterIdSize > 255) {
+        return parser_unexpected_value;
+    }
+
+    crypto_principalToTextual(canisterId, (uint8_t)canisterIdSize, canister_textual, &outLen);
+
+    *icp_canister = (strncmp(canister_textual, ICP_CANISTER_ID_TEXTUAL, sizeof(ICP_CANISTER_ID_TEXTUAL) - 1) == 0);
     return parser_ok;
 }
 
@@ -254,182 +281,43 @@ parser_error_t readCandidICRCTransfer(parser_tx_t *tx, const uint8_t *input, uin
 
     CHECK_PARSER_ERR(readCandidHeader(&ctx, &txn))
     CHECK_PARSER_ERR(readAndCheckRootType(&ctx))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
 
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 6) {
-        return parser_unexpected_value;
-    }
-
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_to) {
-        return parser_unexpected_type;
-    }
-
-    const int64_t accountIndex = txn.element.implementation;
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, accountIndex))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 2) {
-        return parser_unexpected_value;
-    }
-
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_owner || txn.element.implementation != Principal) {
-        return parser_unexpected_type;
-    }
-    // Account -> Owner (Principal) -> OK
-
-    // -----------------------------------------------------------------------
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, accountIndex))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 1;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_subaccount) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // Account -> Subaccount (Vec<Nat8>) -> OK
-
-    // -----------------------------------------------------------------------
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 1;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_fee) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-    if (txn.txn_type != Opt || txn.element.implementation != Nat) {
-        return parser_unexpected_type;
-    }
-    // Fee -> OK
-
-    // -----------------------------------------------------------------------
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 2;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_memo) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // memo -> OK
-
-    // -----------------------------------------------------------------------
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 3;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_from_subaccount) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // from_subaccount -> OK
-
-    // -----------------------------------------------------------------------
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 4;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_created_at_time) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    if (txn.txn_type != Opt || txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-    // Created at time -> OK
-
-    // -----------------------------------------------------------------------
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 5;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != icrc_hash_amount || txn.element.implementation != Nat) {
-        return parser_unexpected_type;
-    }
+    // TransferArg = record {
+    //   to : Account; fee : opt nat; memo : opt blob;
+    //   from_subaccount : opt Subaccount; created_at_time : opt nat64; amount : nat }
+    const uint64_t fields[] = {
+        icrc_hash_to, icrc_hash_fee, icrc_hash_memo, icrc_hash_from_subaccount, icrc_hash_created_at_time, icrc_hash_amount};
+    int64_t types[6] = {0};
+    CHECK_PARSER_ERR(candidExpectRecord(&txn, (int64_t)tx->candid_rootType, fields, 6, types))
+    CHECK_PARSER_ERR(candidExpectIcrcAccount(&txn, types[0]))
+    CHECK_PARSER_ERR(candidExpectOptOf(&txn, types[1], Nat))
+    CHECK_PARSER_ERR(candidExpectOptBlob(&txn, types[2]))
+    CHECK_PARSER_ERR(candidExpectOptBlob(&txn, types[3]))
+    CHECK_PARSER_ERR(candidExpectOptOf(&txn, types[4], Nat64))
+    CHECK_PARSER_ERR(candidExpectPrimitive(types[5], Nat))
 
     icrc_transfer_t *icrc = &ctx.tx_obj->tx_fields.call.data.icrcTransfer;
 
     // Read to (Account)
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->account.has_owner))
-    if (icrc->account.has_owner) {
-        CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->account.owner.len))
-        if (icrc->account.owner.len > DFINITY_PRINCIPAL_LEN) {
-            return parser_unexpected_value;
-        }
-        CHECK_PARSER_ERR(readCandidBytes(&ctx, icrc->account.owner.ptr, icrc->account.owner.len))
-    }
-
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->account.has_subaccount))
-    if (icrc->account.has_subaccount) {
-        CHECK_PARSER_ERR(readCandidText(&ctx, &icrc->account.subaccount))
-    }
+    CHECK_PARSER_ERR(readCandidIcrcAccount(&ctx, &icrc->account))
 
     // Read fee
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->has_fee))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc->has_fee))
     if (icrc->has_fee) {
         CHECK_PARSER_ERR(readCandidLEB128(&ctx, &icrc->fee))
     }
 
     // Read memo
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->has_memo))
-    if (icrc->has_memo) {
-        uint8_t tmp = 0;
-        CHECK_PARSER_ERR(readCandidNat(&ctx, &icrc->memo.len))
-        // should not be bigger than uint64
-        if (icrc->memo.len > 8) {
-            return parser_unexpected_value;
-        }
-
-        icrc->memo.p = ctx.buffer + ctx.offset;
-        for (uint64_t i = 0; i < icrc->memo.len; i++) {
-            CHECK_PARSER_ERR(readCandidByte(&ctx, &tmp))
-        }
-    }
+    CHECK_PARSER_ERR(readCandidIcrcMemo(&ctx, &icrc->has_memo, &icrc->memo))
 
     // Read from_subaccount
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->has_from_subaccount))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc->has_from_subaccount))
     if (icrc->has_from_subaccount) {
         CHECK_PARSER_ERR(readCandidText(&ctx, &icrc->from_subaccount))
     }
 
     // Read has_created_at_time
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc->has_created_at_time))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc->has_created_at_time))
     if (icrc->has_created_at_time) {
         CHECK_PARSER_ERR(readCandidNat64(&ctx, &icrc->created_at_time))
     }
@@ -441,20 +329,7 @@ parser_error_t readCandidICRCTransfer(parser_tx_t *tx, const uint8_t *input, uin
         return parser_unexpected_characters;
     }
 
-    // Check if the transaction has ICP canister
-    const uint8_t *canisterId = ctx.tx_obj->tx_fields.call.canister_id.data;
-    const size_t canisterIdSize = ctx.tx_obj->tx_fields.call.canister_id.len;
-    char canister_textual[64] = {0};
-    uint16_t outLen = sizeof(canister_textual);
-    if (canisterIdSize > 255) {
-        return parser_unexpected_value;
-    }
-
-    crypto_principalToTextual(canisterId, (uint8_t)canisterIdSize, canister_textual, &outLen);
-
-    icrc->icp_canister = (strncmp(canister_textual, ICP_CANISTER_ID_TEXTUAL, sizeof(ICP_CANISTER_ID_TEXTUAL) - 1) == 0);
-
-    return parser_ok;
+    return setIcpCanister(&ctx, &icrc->icp_canister);
 }
 
 parser_error_t readCandidICRC2Approve(parser_tx_t *tx, const uint8_t *input, uint16_t inputSize) {
@@ -469,183 +344,49 @@ parser_error_t readCandidICRC2Approve(parser_tx_t *tx, const uint8_t *input, uin
 
     CHECK_PARSER_ERR(readCandidHeader(&ctx, &txn))
     CHECK_PARSER_ERR(readAndCheckRootType(&ctx))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
 
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 8) {  // ApproveArgs has 8 fields
-        return parser_unexpected_value;
-    }
-
-    // 1. Check fee field (first in the transaction)
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_fee) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-    if (txn.txn_type != Opt || txn.element.implementation != Nat) {
-        return parser_unexpected_type;
-    }
-    // Fee -> OK
-
-    // 2. Check memo field (second in the transaction)
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 1;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_memo) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // memo -> OK
-
-    // 3. Check from_subaccount field
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 2;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_from_subaccount) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // from_subaccount -> OK
-
-    // 4. Check created_at_time field
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 3;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_created_at_time) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-
-    if (txn.txn_type != Opt || txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-    // Created at time -> OK
-
-    // 5. Check amount field
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 4;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_amount || txn.element.implementation != Nat) {
-        return parser_unexpected_type;
-    }
-
-    // 6. Check expected_allowance field
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 5;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_expected_allowance) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-    if (txn.txn_type != Opt || txn.element.implementation != Nat) {
-        return parser_unexpected_type;
-    }
-
-    // 7. Check expires_at field
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 6;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_expires_at) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-    if (txn.txn_type != Opt || txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-
-    // 8. Check spender field
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-
-    txn.element.variant_index = 7;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-
-    if (txn.element.field_hash != icrc_hash_spender) {
-        return parser_unexpected_type;
-    }
-
-    const int64_t accountIndex = txn.element.implementation;
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, accountIndex))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 2) {
-        return parser_unexpected_value;
-    }
+    // ApproveArgs = record {
+    //   fee : opt nat; memo : opt blob; from_subaccount : opt Subaccount; created_at_time : opt nat64;
+    //   amount : nat; expected_allowance : opt nat; expires_at : opt nat64; spender : Account }
+    const uint64_t fields[] = {icrc_hash_fee,
+                               icrc_hash_memo,
+                               icrc_hash_from_subaccount,
+                               icrc_hash_created_at_time,
+                               icrc_hash_amount,
+                               icrc_hash_expected_allowance,
+                               icrc_hash_expires_at,
+                               icrc_hash_spender};
+    int64_t types[8] = {0};
+    CHECK_PARSER_ERR(candidExpectRecord(&txn, (int64_t)tx->candid_rootType, fields, 8, types))
+    CHECK_PARSER_ERR(candidExpectOptOf(&txn, types[0], Nat))
+    CHECK_PARSER_ERR(candidExpectOptBlob(&txn, types[1]))
+    CHECK_PARSER_ERR(candidExpectOptBlob(&txn, types[2]))
+    CHECK_PARSER_ERR(candidExpectOptOf(&txn, types[3], Nat64))
+    CHECK_PARSER_ERR(candidExpectPrimitive(types[4], Nat))
+    CHECK_PARSER_ERR(candidExpectOptOf(&txn, types[5], Nat))
+    CHECK_PARSER_ERR(candidExpectOptOf(&txn, types[6], Nat64))
+    CHECK_PARSER_ERR(candidExpectIcrcAccount(&txn, types[7]))
 
     // Now extract the actual values into our structure - read in the same order as validation
     icrc2_approve_t *icrc2 = &ctx.tx_obj->tx_fields.call.data.icrc2_approve;
 
     // 1. Read fee
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->has_fee))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc2->has_fee))
     if (icrc2->has_fee) {
         CHECK_PARSER_ERR(readCandidLEB128(&ctx, &icrc2->fee))
     }
 
     // 2. Read memo
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->has_memo))
-    if (icrc2->has_memo) {
-        uint8_t tmp = 0;
-        CHECK_PARSER_ERR(readCandidNat(&ctx, &icrc2->memo.len))
-        // should not be bigger than uint64
-        if (icrc2->memo.len > 8) {
-            return parser_unexpected_value;
-        }
-
-        icrc2->memo.p = ctx.buffer + ctx.offset;
-        for (uint64_t i = 0; i < icrc2->memo.len; i++) {
-            CHECK_PARSER_ERR(readCandidByte(&ctx, &tmp))
-        }
-    }
+    CHECK_PARSER_ERR(readCandidIcrcMemo(&ctx, &icrc2->has_memo, &icrc2->memo))
 
     // 3. Read from_subaccount
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->has_from_subaccount))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc2->has_from_subaccount))
     if (icrc2->has_from_subaccount) {
         CHECK_PARSER_ERR(readCandidText(&ctx, &icrc2->from_subaccount))
     }
 
     // 4. Read created_at_time
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->has_created_at_time))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc2->has_created_at_time))
     if (icrc2->has_created_at_time) {
         CHECK_PARSER_ERR(readCandidNat64(&ctx, &icrc2->created_at_time))
     }
@@ -654,48 +395,25 @@ parser_error_t readCandidICRC2Approve(parser_tx_t *tx, const uint8_t *input, uin
     CHECK_PARSER_ERR(readCandidLEB128(&ctx, &icrc2->amount))
 
     // 6. Read expected_allowance
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->has_expected_allowance))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc2->has_expected_allowance))
     if (icrc2->has_expected_allowance) {
         CHECK_PARSER_ERR(readCandidLEB128(&ctx, &icrc2->expected_allowance))
     }
 
     // 7. Read expires_at
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->has_expires_at))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &icrc2->has_expires_at))
     if (icrc2->has_expires_at) {
         CHECK_PARSER_ERR(readCandidNat64(&ctx, &icrc2->expires_at))
     }
 
     // 8. Read spender (Account)
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->spender.has_owner))
-    if (icrc2->spender.has_owner) {
-        CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->spender.owner.len))
-        if (icrc2->spender.owner.len > DFINITY_PRINCIPAL_LEN) {
-            return parser_unexpected_value;
-        }
-        CHECK_PARSER_ERR(readCandidBytes(&ctx, icrc2->spender.owner.ptr, icrc2->spender.owner.len))
-    }
-
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &icrc2->spender.has_subaccount))
-    if (icrc2->spender.has_subaccount) {
-        CHECK_PARSER_ERR(readCandidText(&ctx, &icrc2->spender.subaccount))
-    }
+    CHECK_PARSER_ERR(readCandidIcrcAccount(&ctx, &icrc2->spender))
 
     if (ctx.offset != ctx.bufferLen) {
         return parser_unexpected_characters;
     }
 
-    // Check if the transaction has ICP canister
-    const uint8_t *canisterId = ctx.tx_obj->tx_fields.call.canister_id.data;
-    const size_t canisterIdSize = ctx.tx_obj->tx_fields.call.canister_id.len;
-    char canister_textual[64] = {0};
-    uint16_t outLen = sizeof(canister_textual);
-    if (canisterIdSize > 255) {
-        return parser_unexpected_value;
-    }
-
-    crypto_principalToTextual(canisterId, (uint8_t)canisterIdSize, canister_textual, &outLen);
-
-    icrc2->icp_canister = (strncmp(canister_textual, ICP_CANISTER_ID_TEXTUAL, sizeof(ICP_CANISTER_ID_TEXTUAL) - 1) == 0);
+    CHECK_PARSER_ERR(setIcpCanister(&ctx, &icrc2->icp_canister))
 
     zemu_log("readCandidICRC2Approve OK\n");
     return parser_ok;
@@ -711,101 +429,25 @@ parser_error_t readCandidTransfer(parser_tx_t *tx, const uint8_t *input, uint16_
 
     CHECK_PARSER_ERR(readCandidHeader(&ctx, &txn))
     CHECK_PARSER_ERR(readAndCheckRootType(&ctx))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
 
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    if (txn.txn_length != 6) {
-        return parser_unexpected_value;
-    }
-
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.element.field_hash != transfer_hash_to || txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // To is vec u8, OK
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 1;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != transfer_hash_fee) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-    // Fee is u64, OK
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 2;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != transfer_hash_memo) {
-        return parser_unexpected_type;
-    }
-    if (txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-    // Memo is u64, OK
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 3;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != transfer_hash_from_subaccount) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    if (txn.txn_type != Vector) {
-        return parser_unexpected_type;
-    }
-    // From_subaccount is opt vec u8, OK
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 4;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != transfer_hash_timestamp) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidOptional(&txn))
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-    // Timestamp is opt u64, OK
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, tx->candid_rootType))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 5;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.field_hash != transfer_hash_amount) {
-        return parser_unexpected_type;
-    }
-
-    CHECK_PARSER_ERR(getCandidTypeFromTable(&txn, txn.element.implementation))
-    CHECK_PARSER_ERR(readCandidRecordLength(&txn))
-    txn.element.variant_index = 0;
-    CHECK_PARSER_ERR(readCandidInnerElement(&txn, &txn.element))
-    if (txn.element.implementation != Nat64) {
-        return parser_unexpected_type;
-    }
-    // amount is u64, OK
+    // TransferArgs = record {
+    //   to : AccountIdentifier; fee : Tokens; memo : nat64;
+    //   from_subaccount : opt SubAccount; created_at_time : opt TimeStamp; amount : Tokens }
+    // AccountIdentifier = SubAccount = blob, Tokens = record { e8s : nat64 },
+    // TimeStamp = record { timestamp_nanos : nat64 }
+    const uint64_t fields[] = {transfer_hash_to,        transfer_hash_fee,
+                               transfer_hash_memo,      transfer_hash_from_subaccount,
+                               transfer_hash_timestamp, transfer_hash_amount};
+    int64_t types[6] = {0};
+    CHECK_PARSER_ERR(candidExpectRecord(&txn, (int64_t)tx->candid_rootType, fields, 6, types))
+    CHECK_PARSER_ERR(candidExpectBlob(&txn, types[0]))
+    CHECK_PARSER_ERR(candidExpectRecordOf(&txn, types[1], transfer_hash_e8s, Nat64))
+    CHECK_PARSER_ERR(candidExpectPrimitive(types[2], Nat64))
+    CHECK_PARSER_ERR(candidExpectOptBlob(&txn, types[3]))
+    int64_t timestamp = 0;
+    CHECK_PARSER_ERR(candidExpectOpt(&txn, types[4], &timestamp))
+    CHECK_PARSER_ERR(candidExpectRecordOf(&txn, timestamp, transfer_hash_timestamp_nanos, Nat64))
+    CHECK_PARSER_ERR(candidExpectRecordOf(&txn, types[5], transfer_hash_e8s, Nat64))
 
     // let's read!
     candid_transfer_t *transfer = &ctx.tx_obj->tx_fields.call.data.candid_transfer;
@@ -825,7 +467,7 @@ parser_error_t readCandidTransfer(parser_tx_t *tx, const uint8_t *input, uint16_
     CHECK_PARSER_ERR(readCandidNat64(&ctx, &transfer->memo))
 
     // Read from_subaccount (opt vec u8)
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &transfer->has_from_subaccount))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &transfer->has_from_subaccount))
     if (transfer->has_from_subaccount) {
         CHECK_PARSER_ERR(readCandidText(&ctx, &transfer->from_subaccount))
         if (transfer->from_subaccount.len != DFINITY_SUBACCOUNT_LEN) {
@@ -834,7 +476,7 @@ parser_error_t readCandidTransfer(parser_tx_t *tx, const uint8_t *input, uint16_
     }
 
     // Read timestamp (opt u64)
-    CHECK_PARSER_ERR(readCandidByte(&ctx, &transfer->has_timestamp))
+    CHECK_PARSER_ERR(readCandidOptFlag(&ctx, &transfer->has_timestamp))
     if (transfer->has_timestamp) {
         CHECK_PARSER_ERR(readCandidNat64(&ctx, &transfer->timestamp))
     }
