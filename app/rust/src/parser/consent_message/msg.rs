@@ -23,7 +23,10 @@ use crate::{
     check_canary,
     constants::{CANDID_HEADER_ENTRY_TYPE, DISPLAY_RECORD_TYPE},
     error::{ParserError, ViewError},
-    utils::{decompress_leb128, handle_ui_message, read_u64_le, read_u8},
+    utils::{
+        decompress_leb128, handle_ui_message, handle_ui_message_hex, has_control_chars,
+        read_u64_le, read_u8,
+    },
     DisplayableItem, FromCandidHeader,
 };
 
@@ -450,7 +453,20 @@ impl DisplayableItem for ConsentMessage<'_> {
                     0 => {
                         // Text variant - record { content: text }
                         let (_, text) = parse_text(rem).map_err(|_| ViewError::NoData)?;
-                        handle_ui_message(text.as_bytes(), message, page)
+                        let text = text.as_bytes();
+                        // A NUL would end the value early on screen while the rest is signed,
+                        // and other control characters are not drawn: show such text as hex.
+                        if has_control_chars(text) {
+                            const HEX_SUFFIX: &[u8] = b" (hex)";
+                            if key_len + HEX_SUFFIX.len() < title.len() {
+                                title[key_len..key_len + HEX_SUFFIX.len()]
+                                    .copy_from_slice(HEX_SUFFIX);
+                                title[key_len + HEX_SUFFIX.len()] = 0;
+                            }
+                            handle_ui_message_hex(text, message, page)
+                        } else {
+                            handle_ui_message(text, message, page)
+                        }
                     }
                     2 => {
                         // TimestampSeconds

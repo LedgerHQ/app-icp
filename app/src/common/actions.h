@@ -39,6 +39,9 @@ void parser_clearCombinedDigests(void);
 #endif
 
 extern uint16_t action_addrResponseLen;
+// The address review reads this copy, not G_io_apdu_buffer: a frame received
+// while the review is on screen lands in G_io_apdu_buffer.
+extern uint8_t action_addrResponse[sizeof(answer_t)];
 
 // APDU-level review lock. While set, handleApdu rejects every incoming APDU
 // so the host cannot mutate the tx buffer between review rendering and
@@ -111,9 +114,10 @@ __Z_INLINE zxerr_t app_fill_address() {
     action_addrResponseLen = 0;
     zxerr_t err = crypto_fillAddress(G_io_apdu_buffer, IO_APDU_BUFFER_SIZE - 2, &action_addrResponseLen);
 
-    if (err != zxerr_ok || action_addrResponseLen == 0) {
+    if (err != zxerr_ok || action_addrResponseLen == 0 || action_addrResponseLen > sizeof(action_addrResponse)) {
         THROW(APDU_CODE_EXECUTION_ERROR);
     }
+    MEMCPY(action_addrResponse, G_io_apdu_buffer, sizeof(action_addrResponse));
 
     return zxerr_ok;
 }
@@ -133,6 +137,7 @@ __Z_INLINE void app_reject() {
 
 __Z_INLINE void app_reply_address() {
     review_clear_pending();
+    MEMCPY(G_io_apdu_buffer, action_addrResponse, action_addrResponseLen);
     set_code(G_io_apdu_buffer, action_addrResponseLen, APDU_CODE_OK);
     io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, action_addrResponseLen + 2);
 }

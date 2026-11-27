@@ -61,7 +61,9 @@ __Z_INLINE void extractHDPath(uint32_t rx, uint32_t offset) {
     }
 
     // What expert mode is for: account and address numbers beyond the usual
-    // range, and a non-zero change level. Those stay allowed.
+    // range, and a non-zero change level. Those stay allowed - the review now
+    // names the path whenever it is not the default one, so the account being
+    // signed under is no longer silent.
     const bool is_default_path = ((hdPath[2] & HDPATH_RESTRICTED_MASK) == 0x80000000u) && (hdPath[3] == 0x00000000u) &&
                                  ((hdPath[4] & HDPATH_RESTRICTED_MASK) == 0x00000000u);
 
