@@ -87,6 +87,7 @@ typedef enum {
     hash_field_follow_topic = 338645423,
     hash_field_follow_followees = 3407357762,
     hash_field_visibility = 3540889042,
+    hash_e8s = 5035232,
 } txn_hash_fields;
 
 typedef enum {
@@ -111,6 +112,9 @@ typedef enum {
     transfer_hash_from_subaccount = 1835347746,
     transfer_hash_timestamp = 3258775938,
     transfer_hash_amount = 3573748184,
+    // Tokens and TimeStamp record fields
+    transfer_hash_e8s = 5035232,
+    transfer_hash_timestamp_nanos = 268680022,
 } transfer_hash_fields;
 
 typedef enum {

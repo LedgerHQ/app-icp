@@ -2,6 +2,7 @@ overrides:
   glob: ^10.0.0
 
 allowBuilds:
+  "@parcel/watcher": false
   cpu-features: false
   keccak: true
   node-hid: true

@@ -12,6 +12,9 @@ mod parser;
 mod principal;
 pub mod type_table;
 pub mod utils;
+
+#[cfg(all(target_arch = "arm", target_os = "none"))]
+mod aeabi_unaligned;
 pub use principal::Principal;
 use zemu_sys as _;
 pub mod argument_list;
